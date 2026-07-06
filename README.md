@@ -62,18 +62,26 @@ El servidor queda escuchando en `0.0.0.0:8000` (visible en toda tu red Wi-Fi).
 
 No hay IPs hardcodeadas en el frontend: `app.js` arma la URL del WebSocket a partir de `location.host`, así que funciona igual desde `localhost` o desde la IP de la LAN.
 
-## Modo pantalla completa en el móvil (PWA)
+## Modo pantalla completa en el móvil
 
-La app es una PWA (`static/manifest.json`): se puede "instalar" en el
-teléfono y correr sin la barra de direcciones del navegador, como una
-app nativa.
+La app tiene manifest de PWA (`static/manifest.json`) y se puede
+"Agregar a pantalla de inicio" (Android: menú ⋮; iPhone: botón
+compartir) para tener un ícono propio en el home. **Pero** el modo
+`standalone` real (sin barra de navegador, automático al abrir el
+ícono) requiere HTTPS — Chrome/Android no lo habilita sobre HTTP plano,
+que es como corre esta app en la LAN. Como no vale la pena montar
+HTTPS con certificados de verdad para un uso puramente doméstico, el
+manifest queda para tener el ícono lindo, y en su lugar:
 
-- **Android (Chrome):** abrí la URL, menú (⋮) → **Agregar a pantalla de inicio**.
-- **iPhone (Safari):** abrí la URL, botón compartir → **Agregar a pantalla de inicio**.
+- Hay un **botón de pantalla completa** en el header (ícono de flechitas,
+  al lado del indicador de conexión) que usa la Fullscreen API del
+  navegador — un toque oculta la barra de direcciones mientras usás la
+  app. No es automático como una PWA instalada de verdad, pero no
+  necesita infraestructura nueva. No aparece en Safari/iOS (no soporta
+  esa API ahí).
 
-Después de eso, el ícono queda en el home y abre en modo `standalone`
-(sin barra de navegador). Los íconos se generan con `python icon.py`
-(mismo lugar que el `.ico` del `.exe` — ver `icon.py`).
+Los íconos de la PWA se generan con `python icon.py` (mismo lugar que
+el `.ico` del `.exe` — ver `icon.py`).
 
 ## Launcher (accesos directos estilo SteamDeck)
 

@@ -587,3 +587,44 @@ createTileBlock({
   pollBattery();
   setInterval(pollBattery, BATTERY_POLL_MS);
 })();
+
+/**
+ * Botón de pantalla completa (Fullscreen API) — alternativa a la PWA
+ * standalone real, que necesitaría HTTPS (no tenemos, es HTTP plano en
+ * la LAN). Con un toque oculta la barra del navegador mientras se usa
+ * la app. No soportado en Safari/iOS: el botón queda oculto ahí
+ * (detección de soporte antes de mostrarlo).
+ */
+(() => {
+  const btn = document.getElementById("fullscreen-btn");
+  const expandIcon = btn.querySelector(".fullscreen-btn__icon-expand");
+  const collapseIcon = btn.querySelector(".fullscreen-btn__icon-collapse");
+
+  const supported = Boolean(
+    document.documentElement.requestFullscreen && document.fullscreenEnabled
+  );
+  if (!supported) return;
+
+  btn.hidden = false;
+
+  function updateIcon() {
+    const isFullscreen = Boolean(document.fullscreenElement);
+    expandIcon.hidden = isFullscreen;
+    collapseIcon.hidden = !isFullscreen;
+    btn.setAttribute("aria-label", isFullscreen ? "Salir de pantalla completa" : "Pantalla completa");
+  }
+
+  btn.addEventListener("click", () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {
+        // Algunos navegadores rechazan el pedido si no viene de un gesto
+        // directo del usuario; no hay mucho más para hacer acá.
+      });
+    }
+  });
+
+  document.addEventListener("fullscreenchange", updateIcon);
+  updateIcon();
+})();
