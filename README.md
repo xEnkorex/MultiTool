@@ -1,5 +1,11 @@
 # Audio Mixer (control de volumen por app vía LAN)
 
+Nació de una idea simple: darle una segunda vida a un smartphone viejo
+que ya no se usaba, convirtiéndolo en un panel de control físico y
+táctil para la PC — un mezclador de audio dedicado, launcher de apps,
+disparador de shortcuts y monitor de batería, todo accesible desde la
+pantalla de ese teléfono en vez de dejarlo juntando polvo en un cajón.
+
 ## Estructura
 
 ```
