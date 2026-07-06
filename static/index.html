@@ -18,6 +18,8 @@
   <meta name="apple-mobile-web-app-title" content="Enkore" />
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" />
 
+  <link rel="stylesheet" href="/static/vendor/gridstack/gridstack.min.css" />
+  <link rel="stylesheet" href="/static/vendor/gridstack/gridstack-extra.min.css" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -66,12 +68,70 @@
           <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </button>
+      <button class="fullscreen-btn" id="edit-layout-btn" type="button" aria-label="Editar layout">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="3" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="2" />
+          <rect x="13" y="3" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="2" />
+          <rect x="3" y="13" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="2" />
+          <rect x="13" y="13" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="2" />
+        </svg>
+      </button>
     </div>
   </header>
 
-  <main id="panel-container" class="panel">
-    <p class="empty-state" id="empty-state">Buscando aplicaciones reproduciendo audio…</p>
-  </main>
+  <div class="edit-layout-banner" id="edit-layout-banner" hidden>
+    Editando layout — arrastrá para mover, tirá del borde inferior-derecho para redimensionar.
+    <button type="button" id="edit-layout-done-btn">Listo</button>
+  </div>
+
+  <div class="grid-stack" id="app-grid">
+    <div class="grid-stack-item" gs-id="mixer" gs-x="0" gs-y="0" gs-w="4" gs-h="4" gs-size-to-content="true">
+      <div class="grid-stack-item-content">
+        <main id="panel-container" class="panel">
+          <p class="empty-state" id="empty-state">Buscando aplicaciones reproduciendo audio…</p>
+        </main>
+      </div>
+    </div>
+
+    <div class="grid-stack-item" gs-id="launcher" gs-x="0" gs-y="4" gs-w="2" gs-h="4">
+      <div class="grid-stack-item-content">
+        <section class="tile-section">
+          <h2 class="tile-section__title">LAUNCHER</h2>
+          <div class="tile-grid" id="launcher-grid"></div>
+        </section>
+      </div>
+    </div>
+
+    <div class="grid-stack-item" gs-id="shortcuts" gs-x="2" gs-y="4" gs-w="2" gs-h="4">
+      <div class="grid-stack-item-content">
+        <section class="tile-section">
+          <h2 class="tile-section__title">SHORTCUTS</h2>
+          <div class="tile-grid" id="shortcuts-grid"></div>
+        </section>
+      </div>
+    </div>
+
+    <div class="grid-stack-item" gs-id="bg-apps" gs-x="0" gs-y="8" gs-w="4" gs-h="2" gs-size-to-content="true">
+      <div class="grid-stack-item-content">
+        <section class="tile-section">
+          <button class="tile-section__toggle" id="bg-apps-toggle" type="button">
+            <svg class="tile-section__toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="4" rx="1.5" fill="currentColor" />
+              <rect x="3" y="10" width="18" height="4" rx="1.5" fill="currentColor" />
+              <rect x="3" y="16" width="18" height="4" rx="1.5" fill="currentColor" />
+            </svg>
+            <span class="tile-section__title">EN SEGUNDO PLANO</span>
+            <span class="tile-section__toggle-count" id="bg-apps-count"></span>
+            <svg class="tile-section__toggle-chevron" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <div class="tile-grid" id="bg-apps-grid" hidden></div>
+          <p class="empty-state" id="bg-apps-empty" hidden>No hay apps en segundo plano detectadas.</p>
+        </section>
+      </div>
+    </div>
+  </div>
 
   <template id="app-card-template">
     <section class="app-card" data-name="">
@@ -91,11 +151,6 @@
       <span class="tile__name">Agregar</span>
     </button>
   </template>
-
-  <section class="tile-section">
-    <h2 class="tile-section__title">LAUNCHER</h2>
-    <div class="tile-grid" id="launcher-grid"></div>
-  </section>
 
   <template id="launcher-tile-template">
     <button class="tile" type="button">
@@ -138,11 +193,6 @@
     </div>
   </div>
 
-  <section class="tile-section">
-    <h2 class="tile-section__title">SHORTCUTS</h2>
-    <div class="tile-grid" id="shortcuts-grid"></div>
-  </section>
-
   <template id="shortcut-tile-template">
     <button class="tile tile--shortcut" type="button">
       <span class="tile__icon"></span>
@@ -184,23 +234,6 @@
     </div>
   </div>
 
-  <section class="tile-section">
-    <button class="tile-section__toggle" id="bg-apps-toggle" type="button">
-      <svg class="tile-section__toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="3" y="4" width="18" height="4" rx="1.5" fill="currentColor" />
-        <rect x="3" y="10" width="18" height="4" rx="1.5" fill="currentColor" />
-        <rect x="3" y="16" width="18" height="4" rx="1.5" fill="currentColor" />
-      </svg>
-      <span class="tile-section__title">EN SEGUNDO PLANO</span>
-      <span class="tile-section__toggle-count" id="bg-apps-count"></span>
-      <svg class="tile-section__toggle-chevron" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
-    </button>
-    <div class="tile-grid" id="bg-apps-grid" hidden></div>
-    <p class="empty-state" id="bg-apps-empty" hidden>No hay apps en segundo plano detectadas.</p>
-  </section>
-
   <template id="bg-app-tile-template">
     <div class="tile tile--bg-app">
       <span class="tile__close-badge" role="button" aria-label="Cerrar">–</span>
@@ -209,6 +242,7 @@
     </div>
   </template>
 
+  <script src="/static/vendor/gridstack/gridstack-all.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

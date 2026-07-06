@@ -628,3 +628,89 @@ createTileBlock({
   document.addEventListener("fullscreenchange", updateIcon);
   updateIcon();
 })();
+
+/**
+ * Grid modular (layout personalizable estilo FancyZones/WindowGrid) —
+ * Gridstack.js. Arranca bloqueado (staticGrid); el botón del header
+ * activa el modo edición para arrastrar/redimensionar cada bloque. El
+ * layout (posición + tamaño por bloque) se guarda en el servidor para
+ * que persista entre sesiones y dispositivos.
+ */
+(() => {
+  const gridEl = document.getElementById("app-grid");
+  const editBtn = document.getElementById("edit-layout-btn");
+  const banner = document.getElementById("edit-layout-banner");
+  const doneBtn = document.getElementById("edit-layout-done-btn");
+
+  const grid = GridStack.init(
+    {
+      column: 4,
+      cellHeight: 70,
+      margin: 6,
+      float: true,
+      staticGrid: true,
+      disableOneColumnMode: true,
+    },
+    gridEl
+  );
+
+  let saveTimer = null;
+  function scheduleSave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      const items = grid.save(false).map((item) => ({
+        id: String(item.id),
+        x: item.x,
+        y: item.y,
+        w: item.w,
+        h: item.h,
+      }));
+      try {
+        await fetch("/api/layout", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(items),
+        });
+      } catch {
+        // Si falla el guardado, el layout sigue andando en esta sesión;
+        // se reintenta solo con el próximo cambio.
+      }
+    }, 400);
+  }
+
+  grid.on("change", scheduleSave);
+
+  function setEditMode(enabled) {
+    grid.setStatic(!enabled);
+    gridEl.classList.toggle("edit-mode", enabled);
+    editBtn.classList.toggle("active", enabled);
+    banner.hidden = !enabled;
+  }
+
+  editBtn.addEventListener("click", () => {
+    setEditMode(!gridEl.classList.contains("edit-mode"));
+  });
+  doneBtn.addEventListener("click", () => setEditMode(false));
+
+  // Carga el layout guardado (si existe) SIN recrear los nodos DOM:
+  // grid.update() reposiciona los items existentes en vez de destruirlos,
+  // preservando las referencias/listeners que ya armaron los otros
+  // módulos de la app sobre el contenido interno de cada bloque.
+  (async () => {
+    try {
+      const res = await fetch("/api/layout");
+      if (!res.ok) return;
+      const saved = await res.json();
+      if (!Array.isArray(saved) || saved.length === 0) return;
+
+      for (const item of saved) {
+        const el = gridEl.querySelector(`[gs-id="${item.id}"]`);
+        if (el) {
+          grid.update(el, { x: item.x, y: item.y, w: item.w, h: item.h });
+        }
+      }
+    } catch {
+      // Sin conexión: se queda con el layout default ya presente en el HTML.
+    }
+  })();
+})();

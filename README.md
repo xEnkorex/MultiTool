@@ -12,6 +12,7 @@ pantalla de ese teléfono en vez de dejarlo juntando polvo en un cajón.
 App_AudioManager/
 ├── server.py            # FastAPI: rutas HTTP + WebSocket + APIs, arranca/detiene el hilo de audio
 ├── audio_manager.py     # Hilo dedicado que habla con pycaw/COM (poll + cola de comandos)
+├── layout_store.py      # Persistencia del layout del grid modular (posición/tamaño de cada bloque)
 ├── launcher_store.py    # Persistencia de los accesos directos del launcher (JSON en disco)
 ├── shortcut_store.py    # Persistencia de los shortcuts de teclado (JSON en disco)
 ├── shortcut_runner.py   # Envío de combinaciones de teclas sintéticas (librería `keyboard`)
@@ -31,11 +32,12 @@ App_AudioManager/
 │   ├── style.css        # Tema dark/cyberpunk, sliders táctiles grandes
 │   ├── app.js           # WebSocket cliente + APIs, reconexión automática, render
 │   ├── manifest.json    # Manifest de PWA (Agregar a pantalla de inicio, modo standalone)
-│   └── icons/           # Íconos de la PWA, generados por `python icon.py`
+│   ├── icons/           # Íconos de la PWA, generados por `python icon.py`
+│   └── vendor/gridstack/ # Gridstack.js vendorizado (sin CDN, sin build step)
 └── android-app/         # App Android nativa (WebView-wrapper) — ver sección "App Android"
 ```
 
-La config del launcher (`launcher_config.json`), de shortcuts (`shortcuts_config.json`) y el log (`audiomixer.log`) NO viven en esta carpeta: se guardan en `%APPDATA%\AudioMixer\`, para que persistan sin importar desde dónde corra el `.exe`.
+La config del launcher (`launcher_config.json`), de shortcuts (`shortcuts_config.json`), del layout del grid (`layout_config.json`) y el log (`audiomixer.log`) NO viven en esta carpeta: se guardan en `%APPDATA%\AudioMixer\`, para que persistan sin importar desde dónde corra el `.exe`.
 
 ## Instalación
 
@@ -178,6 +180,30 @@ Lista las apps que probablemente tengan un ícono en la bandeja del sistema, con
 Windows no expone una API pública para leer los íconos reales de la bandeja (es un detalle interno del Shell), así que esto es una **aproximación**: lista procesos del usuario actual que no tienen ninguna ventana visible en primer plano, excluyendo procesos del sistema/plomería de Windows conocidos (ver `background_apps.py` para el detalle de la heurística y sus limitaciones). Puede no incluir el 100% de lo que ves en la bandeja, o incluir alguna app sin ícono de tray real.
 
 Cerrar intenta primero `WM_CLOSE` (lo mismo que Alt+F4, le da a la app la chance de guardar/preguntar) y si no reacciona en 2 segundos, la termina a la fuerza.
+
+## Layout modular (grid personalizable)
+
+Los 4 bloques (mixer, launcher, shortcuts, apps en segundo plano) viven
+en un grid tipo FancyZones/WindowGrid — cada uno se puede mover y
+redimensionar, y la posición queda guardada.
+
+- Botón de grilla (2x2 cuadrados) en el header → activa el **modo edición**.
+- Con el modo activo: arrastrá un bloque para moverlo, tirá del handle
+  cyan en la esquina inferior-derecha para cambiar su tamaño.
+- "Listo" (o volver a tocar el botón) sale del modo edición y bloquea
+  el grid para el uso normal — así un swipe/tap dentro de un bloque
+  (mover un slider, tocar un tile) no dispara el drag del bloque entero.
+
+El layout se guarda en el servidor (`GET`/`PUT /api/layout`), así que es
+el mismo para cualquier dispositivo que abra la app — no es por
+navegador ni por teléfono.
+
+Implementado con [Gridstack.js](https://gridstack.github.io/gridstack.js/)
+vendorizado en `static/vendor/gridstack/` (sin CDN, sin build step,
+consistente con el resto del frontend). El mixer y las apps en segundo
+plano usan `gs-size-to-content` (se autoajustan de alto a su contenido,
+que cambia todo el tiempo); launcher y shortcuts tienen alto fijo con
+scroll interno si el contenido no entra en el espacio asignado.
 
 ## Correr minimizado a la bandeja del sistema (sin consola)
 

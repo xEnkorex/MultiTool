@@ -26,6 +26,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from audio_manager import AppVolumeState, AudioSessionManager
+from layout_store import LayoutItem
+import layout_store
 from launcher_store import LauncherSlot
 import launcher_store
 from shortcut_store import ShortcutSlot
@@ -135,6 +137,17 @@ async def index() -> FileResponse:
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/api/layout")
+async def get_layout() -> list[LayoutItem]:
+    return layout_store.load_layout() or []
+
+
+@app.put("/api/layout")
+async def put_layout(items: list[LayoutItem]) -> dict:
+    layout_store.save_layout(items)
+    return {"ok": True}
 
 
 class LauncherUpdateRequest(BaseModel):
