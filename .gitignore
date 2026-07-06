@@ -23,3 +23,12 @@ Thumbs.db
 # excepción (portada del repo en GitHub).
 *.md
 !README.md
+
+# Toolchain de Android descargado localmente (SDK + Gradle, cientos de MB)
+# — no es código del proyecto, cada uno lo instala aparte. El .apk
+# compilado tampoco se commitea (se adjunta al Release, igual que el .exe).
+android-tools/
+android-app/app/build/
+android-app/build/
+android-app/.gradle/
+*.apk

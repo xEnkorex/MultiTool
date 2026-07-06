@@ -95,6 +95,29 @@ def save_web_icons(output_dir: str = "static/icons") -> None:
     apple_icon.save(os.path.join(output_dir, "apple-touch-icon.png"))
 
 
+ANDROID_DENSITIES = {
+    "mipmap-mdpi": 48,
+    "mipmap-hdpi": 72,
+    "mipmap-xhdpi": 96,
+    "mipmap-xxhdpi": 144,
+    "mipmap-xxxhdpi": 192,
+}
+
+
+def save_android_icons(res_dir: str) -> None:
+    """Íconos `ic_launcher.png` (legacy, no adaptive) para el proyecto
+    Android — una carpeta `mipmap-*` por densidad, como espera Gradle."""
+    import os
+
+    for folder, size in ANDROID_DENSITIES.items():
+        out = os.path.join(res_dir, folder)
+        os.makedirs(out, exist_ok=True)
+        make_icon(size).save(os.path.join(out, "ic_launcher.png"))
+        # ic_launcher_round: mismo arte, el círculo de "seguridad" del ícono
+        # normal ya deja margen de sobra para el recorte redondo de algunos launchers.
+        make_icon(size).save(os.path.join(out, "ic_launcher_round.png"))
+
+
 if __name__ == "__main__":
     save_ico("assets/icon.ico")
     print("Ícono generado en assets/icon.ico")

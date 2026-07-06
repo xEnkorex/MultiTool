@@ -26,12 +26,13 @@ App_AudioManager/
 ├── requirements.txt
 ├── assets/
 │   └── icon.ico         # Generado por `python icon.py`, no hace falta tocarlo a mano
-└── static/
-    ├── index.html       # Estructura de la UI (mixer + launcher + batería)
-    ├── style.css        # Tema dark/cyberpunk, sliders táctiles grandes
-    ├── app.js           # WebSocket cliente + APIs, reconexión automática, render
-    ├── manifest.json    # Manifest de PWA (Agregar a pantalla de inicio, modo standalone)
-    └── icons/           # Íconos de la PWA, generados por `python icon.py`
+├── static/
+│   ├── index.html       # Estructura de la UI (mixer + launcher + batería)
+│   ├── style.css        # Tema dark/cyberpunk, sliders táctiles grandes
+│   ├── app.js           # WebSocket cliente + APIs, reconexión automática, render
+│   ├── manifest.json    # Manifest de PWA (Agregar a pantalla de inicio, modo standalone)
+│   └── icons/           # Íconos de la PWA, generados por `python icon.py`
+└── android-app/         # App Android nativa (WebView-wrapper) — ver sección "App Android"
 ```
 
 La config del launcher (`launcher_config.json`), de shortcuts (`shortcuts_config.json`) y el log (`audiomixer.log`) NO viven en esta carpeta: se guardan en `%APPDATA%\AudioMixer\`, para que persistan sin importar desde dónde corra el `.exe`.
@@ -82,6 +83,61 @@ manifest queda para tener el ícono lindo, y en su lugar:
 
 Los íconos de la PWA se generan con `python icon.py` (mismo lugar que
 el `.ico` del `.exe` — ver `icon.py`).
+
+## App Android (`android-app/`)
+
+Envoltorio nativo mínimo — un WebView a pantalla completa apuntando al
+servidor, en vez de depender del navegador. No es un TWA (eso necesita
+HTTPS + Digital Asset Links, que no tenemos en la LAN): el WebView carga
+HTTP plano sin problema (`usesCleartextTraffic` en el manifest) y el
+modo inmersivo lo controla el propio código nativo, no la Fullscreen API
+del navegador.
+
+**Primera vez que abrís la app**, o manteniendo presionada la pantalla
+después: un diálogo pide la dirección del servidor, con dos formas de
+cargarla —
+
+- **Escanear QR**: el mismo QR del menú "Info / código QR" del ícono de
+  la bandeja en Windows (codifica la URL completa).
+- **Escribirla a mano**: `IP:puerto` de la PC.
+
+Se guarda en `SharedPreferences`, así que solo hace falta configurarla
+una vez (a menos que la IP de la PC cambie).
+
+### Compilar el APK
+
+Requiere JDK 17, Android SDK (platform-tools + `build-tools;34.0.0` +
+`platforms;android-34`) y Gradle — no hace falta Android Studio, se
+puede armar todo por línea de comandos:
+
+```powershell
+# JDK 17
+winget install EclipseAdoptium.Temurin.17.JDK
+
+# Android SDK command-line tools (extraer a una ruta SIN espacios —
+# sdkmanager.bat tiene un bug conocido con espacios en el path)
+# https://developer.android.com/studio#command-line-tools-only
+# extraer a, ej., E:\android-tools\sdk\cmdline-tools\latest\
+
+E:\android-tools\sdk\cmdline-tools\latest\bin\sdkmanager.bat --sdk_root=E:\android-tools\sdk platform-tools "platforms;android-34" "build-tools;34.0.0"
+```
+
+Con eso, `local.properties` en `android-app/` (no se commitea, es por
+máquina) apunta `sdk.dir` a esa ruta, y se compila con:
+
+```powershell
+cd android-app
+.\gradlew.bat assembleDebug
+```
+
+El `.apk` queda en `android-app\app\build\outputs\apk\debug\app-debug.apk`
+— firmado con el certificado de debug estándar de Android (se puede
+instalar directo, sideloading, sin pasar por Play Store; el teléfono va
+a pedir habilitar "Instalar apps de orígenes desconocidos" la primera
+vez).
+
+Íconos generados con `python icon.py` (mismo lugar que el `.ico` del
+`.exe` y los de la PWA).
 
 ## Launcher (accesos directos estilo SteamDeck)
 
