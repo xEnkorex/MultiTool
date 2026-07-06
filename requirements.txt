@@ -1,0 +1,15 @@
+fastapi>=0.111
+uvicorn[standard]>=0.30
+pycaw>=20240210
+comtypes>=1.4
+psutil>=5.9
+hidapi>=0.15
+pystray>=0.19
+pillow>=11.0
+pywin32>=306
+keyboard>=0.13
+qrcode>=8.0
+
+# Solo para compilar el .exe (ver README > "Compilar el ejecutable"),
+# no hace falta para correr la app desde el código fuente:
+# pyinstaller>=6.0

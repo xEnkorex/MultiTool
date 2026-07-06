@@ -1,0 +1,20 @@
+# Entornos / bytecode de Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Artefactos de PyInstaller
+build/
+dist/
+
+# Config y datos de usuario (la app real los guarda en %APPDATA%\AudioMixer,
+# esto es por si alguna vez terminan sueltos en el repo por error)
+launcher_config.json
+shortcuts_config.json
+audiomixer.log
+
+# Editor / SO
+.vscode/
+.idea/
+Thumbs.db

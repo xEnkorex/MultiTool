@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#0a0a0f" />
+  <title>Enkore Mixer</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>AUDIO<span>MIXER</span></h1>
+    <div class="topbar__right">
+      <div class="battery-indicator" id="battery-indicator" hidden>
+        <svg class="battery-indicator__logo" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="12" fill="#00B8FC" />
+          <text x="12" y="16.5" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="13" fill="#05050a">G</text>
+        </svg>
+        <span class="battery-indicator__icon-wrap">
+          <svg class="battery-indicator__icon" viewBox="0 0 26 14" aria-hidden="true">
+            <rect x="1" y="1" width="21" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <rect x="23" y="4.5" width="2.2" height="5" rx="1" fill="currentColor" />
+            <rect class="battery-indicator__fill" id="battery-fill" x="3" y="3" width="17" height="8" rx="1.2" fill="currentColor" />
+          </svg>
+          <svg class="battery-indicator__bolt" id="battery-bolt" viewBox="0 0 24 24" aria-hidden="true" hidden>
+            <path d="M13 2 4 14h6l-1 8 9-12h-6z" fill="currentColor" />
+          </svg>
+        </span>
+        <span class="battery-indicator__value" id="battery-value">--%</span>
+      </div>
+      <div class="battery-indicator" id="headset-battery-indicator" hidden>
+        <svg class="battery-indicator__logo" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3a7 7 0 0 0-7 7v5a2 2 0 0 0 2 2h1a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1H7v-1a5 5 0 0 1 10 0v1h-1a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h1a2 2 0 0 0 2-2v-5a7 7 0 0 0-7-7Z" fill="#e8e8f0" />
+        </svg>
+        <span class="battery-indicator__icon-wrap">
+          <svg class="battery-indicator__icon" viewBox="0 0 26 14" aria-hidden="true">
+            <rect x="1" y="1" width="21" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <rect x="23" y="4.5" width="2.2" height="5" rx="1" fill="currentColor" />
+            <rect class="battery-indicator__fill" id="headset-battery-fill" x="3" y="3" width="17" height="8" rx="1.2" fill="currentColor" />
+          </svg>
+        </span>
+        <span class="battery-indicator__value" id="headset-battery-value">--%</span>
+      </div>
+      <div class="status" id="status">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">Conectando…</span>
+      </div>
+    </div>
+  </header>
+
+  <main id="panel-container" class="panel">
+    <p class="empty-state" id="empty-state">Buscando aplicaciones reproduciendo audio…</p>
+  </main>
+
+  <template id="app-card-template">
+    <section class="app-card" data-name="">
+      <div class="app-card__header">
+        <span class="app-card__badge"></span>
+        <span class="app-card__name"></span>
+        <span class="app-card__value">0%</span>
+      </div>
+      <input class="app-card__slider" type="range" min="0" max="100" step="1" value="0" />
+      <button class="app-card__mute" type="button" aria-label="Silenciar">MUTE</button>
+    </section>
+  </template>
+
+  <template id="add-tile-template">
+    <button class="tile tile--add" type="button">
+      <span class="tile__icon">+</span>
+      <span class="tile__name">Agregar</span>
+    </button>
+  </template>
+
+  <section class="tile-section">
+    <h2 class="tile-section__title">LAUNCHER</h2>
+    <div class="tile-grid" id="launcher-grid"></div>
+  </section>
+
+  <template id="launcher-tile-template">
+    <button class="tile" type="button">
+      <span class="tile__icon"></span>
+      <span class="tile__name">Vacío</span>
+    </button>
+  </template>
+
+  <div class="modal-overlay" id="launcher-modal" hidden>
+    <div class="modal">
+      <h3 class="modal__title">Configurar acceso directo</h3>
+
+      <label class="modal__field">
+        Nombre
+        <input type="text" id="launcher-name-input" maxlength="16" placeholder="Ej: Spotify" />
+      </label>
+
+      <label class="modal__field">
+        Ícono (opcional, 1-2 caracteres o emoji)
+        <input type="text" id="launcher-icon-input" maxlength="2" placeholder="🎵" />
+      </label>
+
+      <label class="modal__field">
+        Ícono personalizado (opcional, ruta a .ico/.png/.jpg — reemplaza al de arriba)
+        <input type="text" id="launcher-icon-path-input" placeholder="C:\Ruta\al\icono.ico" />
+      </label>
+
+      <label class="modal__field">
+        Ruta del ejecutable o acceso directo
+        <input type="text" id="launcher-path-input" placeholder="C:\Ruta\a\la\app.exe" />
+      </label>
+
+      <p class="modal__error" id="launcher-modal-error" hidden></p>
+
+      <div class="modal__actions">
+        <button type="button" id="launcher-delete-btn" class="modal__btn modal__btn--danger">Quitar</button>
+        <button type="button" id="launcher-cancel-btn" class="modal__btn">Cancelar</button>
+        <button type="button" id="launcher-save-btn" class="modal__btn modal__btn--primary">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <section class="tile-section">
+    <h2 class="tile-section__title">SHORTCUTS</h2>
+    <div class="tile-grid" id="shortcuts-grid"></div>
+  </section>
+
+  <template id="shortcut-tile-template">
+    <button class="tile tile--shortcut" type="button">
+      <span class="tile__icon"></span>
+      <span class="tile__name">Vacío</span>
+    </button>
+  </template>
+
+  <div class="modal-overlay" id="shortcut-modal" hidden>
+    <div class="modal">
+      <h3 class="modal__title">Configurar shortcut</h3>
+
+      <label class="modal__field">
+        Nombre
+        <input type="text" id="shortcut-name-input" maxlength="16" placeholder="Ej: Color Picker" />
+      </label>
+
+      <label class="modal__field">
+        Ícono (opcional, 1-2 caracteres o emoji)
+        <input type="text" id="shortcut-icon-input" maxlength="2" placeholder="🎨" />
+      </label>
+
+      <label class="modal__field">
+        Ícono personalizado (opcional, ruta a .ico/.png/.jpg — reemplaza al de arriba)
+        <input type="text" id="shortcut-icon-path-input" placeholder="C:\Ruta\al\icono.png" />
+      </label>
+
+      <label class="modal__field">
+        Combinación de teclas
+        <input type="text" id="shortcut-keys-input" placeholder="win+shift+c" />
+      </label>
+
+      <p class="modal__error" id="shortcut-modal-error" hidden></p>
+
+      <div class="modal__actions">
+        <button type="button" id="shortcut-delete-btn" class="modal__btn modal__btn--danger">Quitar</button>
+        <button type="button" id="shortcut-cancel-btn" class="modal__btn">Cancelar</button>
+        <button type="button" id="shortcut-save-btn" class="modal__btn modal__btn--primary">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <section class="tile-section">
+    <button class="tile-section__toggle" id="bg-apps-toggle" type="button">
+      <svg class="tile-section__toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3" y="4" width="18" height="4" rx="1.5" fill="currentColor" />
+        <rect x="3" y="10" width="18" height="4" rx="1.5" fill="currentColor" />
+        <rect x="3" y="16" width="18" height="4" rx="1.5" fill="currentColor" />
+      </svg>
+      <span class="tile-section__title">EN SEGUNDO PLANO</span>
+      <span class="tile-section__toggle-count" id="bg-apps-count"></span>
+      <svg class="tile-section__toggle-chevron" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
+    <div class="tile-grid" id="bg-apps-grid" hidden></div>
+    <p class="empty-state" id="bg-apps-empty" hidden>No hay apps en segundo plano detectadas.</p>
+  </section>
+
+  <template id="bg-app-tile-template">
+    <div class="tile tile--bg-app">
+      <span class="tile__close-badge" role="button" aria-label="Cerrar">–</span>
+      <span class="tile__icon"></span>
+      <span class="tile__name"></span>
+    </div>
+  </template>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
