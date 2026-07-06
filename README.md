@@ -19,7 +19,7 @@ App_AudioManager/
 ├── logitech_battery.py  # Batería de mouse/teclado Logitech vía HID++ (protocolo de Solaar)
 ├── bt_battery.py        # Batería de dispositivos Bluetooth clásicos (headset) vía Windows
 ├── paths.py             # Resolución de rutas (dev vs. .exe empaquetado)
-├── icon.py              # Genera el ícono de la app (.ico del exe + ícono del tray)
+├── icon.py              # Genera los íconos de la app (.ico del exe, tray, y set de la PWA)
 ├── tray.py              # Punto de entrada empaquetado: server + ícono en la bandeja del sistema
 ├── updater.py           # Chequeo de actualizaciones contra VERSION en GitHub (main)
 ├── VERSION              # Versión actual, ej. "1.0.0" — bumpear antes de cada release
@@ -29,7 +29,9 @@ App_AudioManager/
 └── static/
     ├── index.html       # Estructura de la UI (mixer + launcher + batería)
     ├── style.css        # Tema dark/cyberpunk, sliders táctiles grandes
-    └── app.js           # WebSocket cliente + APIs, reconexión automática, render
+    ├── app.js           # WebSocket cliente + APIs, reconexión automática, render
+    ├── manifest.json    # Manifest de PWA (Agregar a pantalla de inicio, modo standalone)
+    └── icons/           # Íconos de la PWA, generados por `python icon.py`
 ```
 
 La config del launcher (`launcher_config.json`), de shortcuts (`shortcuts_config.json`) y el log (`audiomixer.log`) NO viven en esta carpeta: se guardan en `%APPDATA%\AudioMixer\`, para que persistan sin importar desde dónde corra el `.exe`.
@@ -59,6 +61,19 @@ El servidor queda escuchando en `0.0.0.0:8000` (visible en toda tu red Wi-Fi).
   3. Si no conecta, revisa que el Firewall de Windows permita conexiones entrantes al puerto 8000 en redes privadas (te lo suele preguntar la primera vez que corres `server.py`; si no, crea una regla entrante para `python.exe` o el puerto TCP 8000).
 
 No hay IPs hardcodeadas en el frontend: `app.js` arma la URL del WebSocket a partir de `location.host`, así que funciona igual desde `localhost` o desde la IP de la LAN.
+
+## Modo pantalla completa en el móvil (PWA)
+
+La app es una PWA (`static/manifest.json`): se puede "instalar" en el
+teléfono y correr sin la barra de direcciones del navegador, como una
+app nativa.
+
+- **Android (Chrome):** abrí la URL, menú (⋮) → **Agregar a pantalla de inicio**.
+- **iPhone (Safari):** abrí la URL, botón compartir → **Agregar a pantalla de inicio**.
+
+Después de eso, el ícono queda en el home y abre en modo `standalone`
+(sin barra de navegador). Los íconos se generan con `python icon.py`
+(mismo lugar que el `.ico` del `.exe` — ver `icon.py`).
 
 ## Launcher (accesos directos estilo SteamDeck)
 

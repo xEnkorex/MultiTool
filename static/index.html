@@ -5,6 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <meta name="theme-color" content="#0a0a0f" />
   <title>Enkore Mixer</title>
+
+  <!-- PWA: permite "Agregar a pantalla de inicio" y correr sin la barra
+       del navegador (display: standalone en manifest.json). -->
+  <link rel="manifest" href="/static/manifest.json" />
+  <link rel="icon" href="/static/icons/icon-192.png" />
+
+  <!-- iOS no lee bien manifest.json para el modo standalone; necesita
+       estas meta tags específicas además del manifest. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Enkore" />
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" />
+
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
