@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('static', 'static'), ('assets', 'assets')]
+datas = [('static', 'static'), ('assets', 'assets'), ('VERSION', '.')]
 binaries = []
 hiddenimports = ['uvicorn.lifespan.on', 'uvicorn.protocols.http.auto', 'uvicorn.protocols.websockets.auto', 'uvicorn.loops.auto']
 tmp_ret = collect_all('uvicorn')

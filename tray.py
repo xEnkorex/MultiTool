@@ -27,6 +27,7 @@ import logging
 import socket
 import subprocess
 import threading
+import time
 import webbrowser
 
 import pystray
@@ -34,11 +35,13 @@ import uvicorn
 
 import icon as icon_module
 import paths
+import updater
 from server import app
 
 logger = logging.getLogger("tray")
 
 PORT = 8000
+UPDATE_CHECK_INTERVAL_HOURS = 6
 
 
 def _lan_ip() -> str:
@@ -126,6 +129,27 @@ def _build_info_window(lan_url: str) -> None:
     win.focus_force()
 
 
+def _show_update_available(new_version: str) -> None:
+    import tkinter.messagebox as messagebox
+
+    should_open = messagebox.askyesno(
+        "Audio Mixer — actualización disponible",
+        f"Hay una nueva versión: v{new_version}\n"
+        f"(la tuya: v{updater.get_current_version()})\n\n"
+        "¿Abrir la página de descargas?",
+    )
+    if should_open:
+        webbrowser.open(updater.RELEASES_URL)
+
+
+def _show_up_to_date() -> None:
+    import tkinter.messagebox as messagebox
+
+    messagebox.showinfo(
+        "Audio Mixer", f"Estás al día (v{updater.get_current_version()})."
+    )
+
+
 def main() -> None:
     config = uvicorn.Config(app, host="0.0.0.0", port=PORT, log_level="warning")
     server = uvicorn.Server(config)
@@ -162,15 +186,45 @@ def main() -> None:
         server.should_exit = True
         tray_icon.stop()
 
+    def check_updates_now(_icon: pystray.Icon | None = None, _item: object = None) -> None:
+        def worker() -> None:
+            new_version = updater.check_for_update()
+            if _tk_root is None:
+                return
+            if new_version:
+                _tk_root.after(0, _show_update_available, new_version)
+            else:
+                _tk_root.after(0, _show_up_to_date)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     menu = pystray.Menu(
         pystray.MenuItem("Abrir panel", open_panel, default=True),
         pystray.MenuItem("Info / código QR", show_info),
         pystray.MenuItem(f"Copiar URL de red ({lan_ip})", copy_lan_url),
+        pystray.MenuItem("Buscar actualizaciones", check_updates_now),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Salir", quit_app),
     )
 
     tray_icon = pystray.Icon("audio_mixer", icon_module.make_icon(64), "Audio Mixer", menu)
+
+    def update_check_loop() -> None:
+        # Un chequeo al ratito de arrancar (no apenas inicia, para no competir
+        # con el arranque del server/tray) y después cada N horas.
+        time.sleep(30)
+        while True:
+            new_version = updater.check_for_update()
+            if new_version:
+                tray_icon.notify(
+                    f"Versión {new_version} disponible (tenés {updater.get_current_version()}). "
+                    "Buscar actualizaciones > para descargarla.",
+                    "Audio Mixer",
+                )
+            time.sleep(UPDATE_CHECK_INTERVAL_HOURS * 3600)
+
+    threading.Thread(target=update_check_loop, daemon=True).start()
+
     tray_icon.run()
 
 

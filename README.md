@@ -15,6 +15,8 @@ App_AudioManager/
 ├── paths.py             # Resolución de rutas (dev vs. .exe empaquetado)
 ├── icon.py              # Genera el ícono de la app (.ico del exe + ícono del tray)
 ├── tray.py              # Punto de entrada empaquetado: server + ícono en la bandeja del sistema
+├── updater.py           # Chequeo de actualizaciones contra VERSION en GitHub (main)
+├── VERSION              # Versión actual, ej. "1.0.0" — bumpear antes de cada release
 ├── requirements.txt
 ├── assets/
 │   └── icon.ico         # Generado por `python icon.py`, no hace falta tocarlo a mano
@@ -124,6 +126,7 @@ python -m PyInstaller --noconfirm --onefile --noconsole `
   --icon assets/icon.ico `
   --add-data "static;static" `
   --add-data "assets;assets" `
+  --add-data "VERSION;." `
   --collect-all uvicorn `
   --hidden-import uvicorn.lifespan.on `
   --hidden-import uvicorn.protocols.http.auto `
@@ -145,6 +148,37 @@ corre).
 **Para que arranque solo con Windows:** creá un acceso directo a
 `dist\AudioMixer.exe` y pegalo en la carpeta de inicio
 (`Win+R` → `shell:startup`).
+
+## Publicar una actualización
+
+El tray chequea la versión (ver sección siguiente) leyendo el archivo
+`VERSION` de la rama `main` en GitHub — así que publicar una actualización
+es:
+
+1. Bumpear el archivo `VERSION` (ej. `1.0.0` → `1.1.0`).
+2. Commit + push a `main`.
+3. Compilar el `.exe` (pasos de arriba) y crear un **Release** en GitHub
+   (tag `v1.1.0`, con `dist\AudioMixer.exe` adjunto) — es donde el botón
+   "Buscar actualizaciones" manda a la gente a descargarlo. `dist/` está
+   en `.gitignore` a propósito (no se commitea el binario al repo, se
+   adjunta al Release).
+
+## Actualizaciones automáticas (tray)
+
+El repo es público, así que el chequeo lee `VERSION` directo de
+`raw.githubusercontent.com` sin credenciales — si el repo pasara a
+privado, esto deja de encontrar actualizaciones (falla la conexión) sin
+romper nada más.
+
+No es un webhook: un webhook necesitaría que la PC del usuario exponga un
+endpoint público para que GitHub le avise, lo cual no tiene sentido para
+una app de escritorio. En cambio es polling — un hilo en segundo plano
+que pregunta cada `UPDATE_CHECK_INTERVAL_HOURS` (6 por defecto, en
+`tray.py`), más un ítem de menú **"Buscar actualizaciones"** para
+chequear al toque. Si hay una versión más nueva:
+
+- El chequeo periódico muestra una notificación nativa de Windows (globo/toast).
+- El chequeo manual abre un diálogo preguntando si querés ir a la página de descargas.
 
 ### Nota sobre `--noconsole`
 
