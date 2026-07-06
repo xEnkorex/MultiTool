@@ -18,3 +18,8 @@ audiomixer.log
 .vscode/
 .idea/
 Thumbs.db
+
+# Markdown: notas internas de desarrollo afuera del repo. README.md es la
+# excepción (portada del repo en GitHub).
+*.md
+!README.md
