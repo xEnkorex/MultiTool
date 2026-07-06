@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -114,6 +114,19 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="PC Audio Mixer", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def no_cache_frontend(request: Request, call_next):
+    # HTML/CSS/JS/íconos se sirven siempre frescos: ya nos pasó más de una
+    # vez que el navegador se queda pegado a una versión vieja (íconos
+    # SVG, o el propio app.js) y toca explicarle al usuario que haga un
+    # hard-refresh. Más simple: no dejar que el navegador cachee nada de
+    # esto — son archivos chicos, no vale la pena el riesgo de staleness.
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.get("/")
