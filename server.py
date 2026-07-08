@@ -134,16 +134,26 @@ async def _clear_session_tabs_after_grace(session_key: str) -> None:
     await connections.broadcast(_state_to_payload(audio_manager.get_state_snapshot(), _all_extension_tabs()))
 
 
-def _resolve_tab_target(composite_tab_id: str) -> tuple[WebSocket, int] | None:
-    """Deshace el `id` compuesto que arma `_all_extension_tabs` para saber
-    a qué conexión de extensión (y con qué tabId real) reenviar un comando."""
+def _split_composite_tab_id(composite_tab_id: str) -> tuple[str, int] | None:
+    """Deshace el `id` compuesto (`session_key:tabId`) que arma
+    `_all_extension_tabs`, sin resolver todavía a qué WebSocket corresponde."""
     session_key, sep, raw_id = composite_tab_id.rpartition(":")
     if not sep or not raw_id.lstrip("-").isdigit():
         return None
+    return session_key, int(raw_id)
+
+
+def _resolve_tab_target(composite_tab_id: str) -> tuple[WebSocket, int] | None:
+    """A qué conexión de extensión (y con qué tabId real) reenviarle un
+    comando para la pestaña identificada por ese id compuesto."""
+    split = _split_composite_tab_id(composite_tab_id)
+    if split is None:
+        return None
+    session_key, raw_id = split
     session = extension_sessions.get(session_key)
     if session is None or session["ws"] is None:
         return None
-    return session["ws"], int(raw_id)
+    return session["ws"], raw_id
 
 
 def _strip_exe(name: str) -> str:
@@ -490,9 +500,25 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 target = _resolve_tab_target(tab_id) if isinstance(tab_id, str) else None
                 if target is not None and isinstance(volume, (int, float)):
                     target_ws, raw_tab_id = target
+                    volume_int = int(volume)
                     await target_ws.send_text(
-                        json.dumps({"type": "set_tab_volume", "tabId": raw_tab_id, "volume": int(volume)})
+                        json.dumps({"type": "set_tab_volume", "tabId": raw_tab_id, "volume": volume_int})
                     )
+                    # El volumen de la pestaña y el del navegador se
+                    # multiplican (no hay forma de que uno "gane" del todo
+                    # sobre el otro) — así que si pedís más de lo que el
+                    # navegador tiene puesto ahora, lo acompañamos subiendo
+                    # el navegador a ese mismo nivel, si no una pestaña al
+                    # 100% seguiría sonando bajito con el navegador al 20%.
+                    split = _split_composite_tab_id(tab_id)
+                    if split is not None:
+                        session_key, _ = split
+                        browser_volume = next(
+                            (a.volume for a in audio_manager.get_state_snapshot() if a.name == session_key),
+                            None,
+                        )
+                        if browser_volume is not None and volume_int > browser_volume:
+                            audio_manager.request_set_volume(session_key, volume_int)
             elif action == "toggle_tab_mute":
                 tab_id = data.get("tabId")
                 target = _resolve_tab_target(tab_id) if isinstance(tab_id, str) else None
@@ -578,6 +604,30 @@ async def extension_websocket(websocket: WebSocket) -> None:
                     label = _strip_exe(browser_process_name)
                     for tab in tabs:
                         tab["browser"] = label
+
+                # Una pestaña recién descubierta arranca al volumen que la
+                # extensión le puso por default (100%) — pero tiene más
+                # sentido que arranque calzada con el volumen actual del
+                # navegador, así el primer sonido no pega un salto. De ahí
+                # en más el fader de la pestaña manda solo (son capas que
+                # se multiplican, no hay forma de que "ignore" al del
+                # navegador — lo más parecido es arrancar igualados).
+                previous_ids = {t.get("id") for t in session["tabs"]}
+                new_ids = {t.get("id") for t in tabs} - previous_ids
+                if new_ids and browser_process_name:
+                    app_volume = next(
+                        (a.volume for a in audio_manager.get_state_snapshot() if a.name == browser_process_name),
+                        None,
+                    )
+                    if app_volume is not None:
+                        for tab in tabs:
+                            if tab.get("id") in new_ids:
+                                tab["volume"] = app_volume
+                        for new_id in new_ids:
+                            await websocket.send_text(
+                                json.dumps({"type": "set_tab_volume", "tabId": new_id, "volume": app_volume})
+                            )
+
                 session["tabs"] = tabs
                 await connections.broadcast(
                     _state_to_payload(audio_manager.get_state_snapshot(), _all_extension_tabs())

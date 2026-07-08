@@ -2,10 +2,11 @@
  * Service worker de la extensión: mantiene un WebSocket con AudioMixer y
  * le reporta qué pestañas están reproduciendo audio ahora mismo.
  *
- * Mute usa la API nativa `chrome.tabs.update({muted})` (instantánea y
- * confiable). El volumen no tiene equivalente nativo en la API de
- * pestañas, así que se logra escalando el `.volume` de los elementos
- * <video>/<audio> dentro de la página, vía content.js.
+ * Mute y volumen se aplican igual — vía content.js, escalando/muteando
+ * los elementos <video>/<audio> de la página — en vez de usar el mute
+ * nativo del navegador (`chrome.tabs.update({muted})`). Así queda
+ * sincronizado con el propio botón de mute del reproductor (YouTube,
+ * Twitch, etc.): es literalmente el mismo estado, no dos por separado.
  */
 
 const BACKEND_WS_URL = "ws://localhost:8000/ws/extension";
@@ -55,14 +56,25 @@ function clearSilenceTimer(tabId) {
 // sonando desde antes del reinicio no se volvía a reportar nunca — recién
 // se detectaba si pasaba algo que disparara onUpdated (pausarla, mutearla).
 async function rehydrateFromLiveTabs() {
-  let audibleTabs;
+  // Un reinicio del service worker no destruye los content scripts ya
+  // inyectados en pestañas abiertas (esos siguen vivos mientras la página
+  // no navegue) — así que en vez de solo mirar `audible`, les pedimos a
+  // TODAS las pestañas que nos vuelvan a contar su volumen/mute actual;
+  // las que tengan nuestro content script cargado van a responder.
+  let allTabs;
   try {
-    audibleTabs = await chrome.tabs.query({ audible: true });
+    allTabs = await chrome.tabs.query({});
   } catch {
     return;
   }
-  for (const tab of audibleTabs) {
-    upsertTab(tab);
+  for (const tab of allTabs) {
+    if (tab.audible) upsertTab(tab);
+    if (typeof tab.id === "number") {
+      chrome.tabs.sendMessage(tab.id, { type: "request_media_state" }).catch(() => {
+        // La mayoría de las pestañas no tienen el content script inyectado
+        // (páginas internas, u otra extensión) — es el caso esperado.
+      });
+    }
   }
 }
 
@@ -159,11 +171,14 @@ async function handleCommand(msg) {
   } else if (msg.type === "toggle_tab_mute") {
     const info = tabState.get(msg.tabId);
     if (!info) return;
+    const nextMuted = !info.muted;
+    info.muted = nextMuted;
     try {
-      await chrome.tabs.update(msg.tabId, { muted: !info.muted });
+      await chrome.tabs.sendMessage(msg.tabId, { type: "set_muted", muted: nextMuted });
     } catch {
-      // La pestaña pudo haberse cerrado justo antes de recibir el comando.
+      // El content script puede no estar inyectado — no hay nada que hacer ahí.
     }
+    queueSendState();
   } else if (msg.type === "toggle_pin_tab") {
     if (pinnedTabs.has(msg.tabId)) {
       pinnedTabs.delete(msg.tabId);
@@ -192,25 +207,69 @@ async function handleCommand(msg) {
   }
 }
 
+// Mensajes que llegan de content.js (no del backend) — canal totalmente
+// aparte de `handleCommand`, que es para lo que llega por el WebSocket.
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (msg.type === "media_state" && sender.tab && typeof sender.tab.id === "number") {
+    // Que la página nos avise de esto SÍ despierta el service worker
+    // (Chrome lo garantiza para mensajería de la extensión) — pero eso no
+    // implica que el WebSocket hacia el backend siga conectado; sin este
+    // intento, el aviso se guardaba en tabState pero podía tardar hasta 1
+    // minuto (el peor caso de la alarma) en llegarle al mixer.
+    ensureConnected();
+    handleMediaState(sender.tab.id, msg);
+  }
+});
+
+async function handleMediaState(tabId, msg) {
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return; // la pestaña cerró justo antes de que llegara el reporte
+  }
+  // Que la propia página tenga un elemento de audio/video real (aunque
+  // esté muteado o en pausa) alcanza para que la pestaña quede en el
+  // mixer — antes solo se descubría vía `audible`, así que una pestaña
+  // que arrancaba muteada (Twitch/YouTube muteados desde su propio botón
+  // antes de que nosotros la viéramos sonar) nunca aparecía.
+  clearSilenceTimer(tabId);
+  tabState.set(tabId, {
+    title: tab.title || "Pestaña",
+    favIconUrl: tab.favIconUrl || null,
+    audible: Boolean(tab.audible),
+    muted: msg.muted,
+    volume: msg.volume,
+    pinned: pinnedTabs.has(tabId),
+    hasMedia: true,
+  });
+  queueSendState();
+}
+
 function upsertTab(tab) {
   const pinned = pinnedTabs.has(tab.id);
+  const existing = tabState.get(tab.id);
+  const hasMedia = Boolean(existing && existing.hasMedia);
 
-  if (!tab.audible && !pinned && !tabState.has(tab.id)) return; // nunca estuvo, nada que hacer
+  if (!tab.audible && !pinned && !hasMedia && !existing) return; // nunca estuvo, nada que hacer
 
   if (tab.audible) clearSilenceTimer(tab.id);
 
-  const existing = tabState.get(tab.id);
   tabState.set(tab.id, {
     title: tab.title || "Pestaña",
     favIconUrl: tab.favIconUrl || null,
     audible: Boolean(tab.audible),
-    muted: Boolean(tab.mutedInfo && tab.mutedInfo.muted),
+    // Si ya sabemos por la propia página que tiene un elemento de media,
+    // esa es la fuente de verdad para el mute — `mutedInfo` es el mute
+    // nativo del navegador, que ya no es el mecanismo que usamos.
+    muted: hasMedia ? existing.muted : Boolean(tab.mutedInfo && tab.mutedInfo.muted),
     volume: existing ? existing.volume : 100,
     pinned,
+    hasMedia,
   });
   queueSendState();
 
-  if (!tab.audible && !pinned) {
+  if (!tab.audible && !pinned && !hasMedia) {
     // Le damos un margen antes de sacarla del mixer en vez de borrarla ya:
     // si vuelve a sonar antes de que expire, `clearSilenceTimer` de arriba
     // cancela esta remoción.
