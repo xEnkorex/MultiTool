@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "AudioMixer — Control por pestaña (prototipo)",
+  "version": "0.1.0",
+  "description": "Conecta las pestañas del navegador con AudioMixer para poder controlar mute/volumen de cada pestaña por separado.",
+  "permissions": ["tabs", "alarms"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ]
+}

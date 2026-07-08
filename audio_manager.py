@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import comtypes
+from pycaw.constants import AudioSessionState
 from pycaw.pycaw import AudioUtilities
 
 logger = logging.getLogger("audio_manager")
@@ -44,6 +45,11 @@ class AppVolumeState:
     name: str
     volume: int
     muted: bool
+    # True si Windows reporta ALGUNA sesión de este proceso como "Active"
+    # (con un stream de audio abierto ahora mismo) — no es lo mismo que
+    # "muted": una app pausada/silenciosa quedaría Inactive aunque no esté
+    # muteada. Se usa para el efecto de "sonando" en el mixer.
+    active: bool
 
 
 class AudioSessionManager:
@@ -155,9 +161,10 @@ class AudioSessionManager:
                 primary = sessions[0]
                 volume = round(primary.SimpleAudioVolume.GetMasterVolume() * 100)
                 muted = bool(primary.SimpleAudioVolume.GetMute())
+                active = any(s.State == AudioSessionState.Active for s in sessions)
             except comtypes.COMError:
                 continue
-            new_state.append(AppVolumeState(name=name, volume=volume, muted=muted))
+            new_state.append(AppVolumeState(name=name, volume=volume, muted=muted, active=active))
 
         new_state.sort(key=lambda a: a.name.lower())
 

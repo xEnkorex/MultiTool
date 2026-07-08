@@ -13,21 +13,31 @@
 (() => {
   const container = document.getElementById("panel-container");
   const emptyState = document.getElementById("empty-state");
-  const template = document.getElementById("app-card-template");
+  const rowTemplate = document.getElementById("mixer-row-template");
   const statusDot = document.getElementById("status-dot");
   const statusText = document.getElementById("status-text");
 
-  /** @type {Map<string, {root: HTMLElement, slider: HTMLInputElement, value: HTMLElement, mute: HTMLElement}>} */
+  /** @type {Map<string, {root: HTMLElement, groupEl: HTMLElement, nestedContainer: HTMLElement, slider: HTMLInputElement, value: HTMLElement, mute: HTMLElement}>} */
   const cards = new Map();
 
-  /** Nombres de apps cuyo slider el usuario está tocando ahora mismo. */
+  /** Filas de pestaña anidadas dentro del grupo de su navegador (mismo shape que `cards`, sin groupEl/nestedContainer). */
+  const tabRows = new Map();
+
+  /** Claves ("app:name" / "tab:id") cuyo slider el usuario está tocando ahora. */
   const activeDrags = new Set();
 
   let socket = null;
   let reconnectDelay = 1000;
   const MAX_RECONNECT_DELAY = 10000;
-  let sendVolumeTimer = null;
-  const PENDING_SENDS = new Map();
+
+  // Los eventos "input" del slider disparan muy seguido durante el arrastre;
+  // se junta como máximo un mensaje cada ~60ms por app/pestaña para no
+  // saturar el WebSocket ni el hilo de audio en el backend. Apps y pestañas
+  // comparten timer pero van en colas separadas porque el mensaje que
+  // espera el servidor es distinto para cada una.
+  let sendTimer = null;
+  const PENDING_APP_VOLUME = new Map();
+  const PENDING_TAB_VOLUME = new Map();
 
   function setStatus(state) {
     statusDot.className = "status-dot " + state;
@@ -61,7 +71,7 @@
         return;
       }
       if (msg.type === "state") {
-        renderState(msg.apps);
+        renderState(msg.apps, msg.tabs || []);
       }
     });
 
@@ -81,82 +91,257 @@
     }
   }
 
-  // Los eventos "input" del slider disparan muy seguido durante el arrastre;
-  // se envía como máximo un mensaje cada ~60ms por app para no saturar el
-  // WebSocket ni el hilo de audio en el backend.
-  function queueVolumeSend(name, volume) {
-    PENDING_SENDS.set(name, volume);
-    if (sendVolumeTimer) return;
-    sendVolumeTimer = setTimeout(() => {
-      for (const [n, v] of PENDING_SENDS) {
-        sendMessage({ type: "set_volume", name: n, volume: v });
-      }
-      PENDING_SENDS.clear();
-      sendVolumeTimer = null;
-    }, 60);
+  function queueAppVolume(name, volume) {
+    PENDING_APP_VOLUME.set(name, volume);
+    if (sendTimer) return;
+    sendTimer = setTimeout(flushPendingVolumes, 60);
   }
 
-  function createCard(name) {
-    const fragment = template.content.cloneNode(true);
-    const root = fragment.querySelector(".app-card");
-    const badge = fragment.querySelector(".app-card__badge");
-    const nameEl = fragment.querySelector(".app-card__name");
-    const value = fragment.querySelector(".app-card__value");
-    const slider = fragment.querySelector(".app-card__slider");
-    const mute = fragment.querySelector(".app-card__mute");
+  function queueTabVolume(tabId, volume) {
+    PENDING_TAB_VOLUME.set(tabId, volume);
+    if (sendTimer) return;
+    sendTimer = setTimeout(flushPendingVolumes, 60);
+  }
 
-    root.dataset.name = name;
-    badge.textContent = name.replace(/\.exe$/i, "").slice(0, 2).toUpperCase();
-    nameEl.textContent = name.replace(/\.exe$/i, "");
+  function flushPendingVolumes() {
+    for (const [name, v] of PENDING_APP_VOLUME) {
+      sendMessage({ type: "set_volume", name, volume: v });
+    }
+    PENDING_APP_VOLUME.clear();
+    for (const [tabId, v] of PENDING_TAB_VOLUME) {
+      sendMessage({ type: "set_tab_volume", tabId, volume: v });
+    }
+    PENDING_TAB_VOLUME.clear();
+    sendTimer = null;
+  }
 
-    slider.addEventListener("pointerdown", () => activeDrags.add(name));
-    slider.addEventListener("pointerup", () => activeDrags.delete(name));
-    slider.addEventListener("pointercancel", () => activeDrags.delete(name));
+  // Fila de mixer compartida por apps y pestañas anidadas (ver
+  // `#mixer-row-template`): el propio slider ocupa toda la fila como
+  // fondo, así que "crear una fila" es siempre lo mismo sea top-level o
+  // anidada — solo cambia dónde se cuelga y si lleva la clase `--nested`.
+  function buildRow(key, item, parent, { nested = false } = {}) {
+    const fragment = rowTemplate.content.cloneNode(true);
+    const root = fragment.querySelector(".mixer-row");
+    const badge = fragment.querySelector(".mixer-row__badge");
+    const nameEl = fragment.querySelector(".mixer-row__name");
+    const value = fragment.querySelector(".mixer-row__value");
+    const slider = fragment.querySelector(".mixer-row__slider");
+    const focus = fragment.querySelector(".mixer-row__focus");
+    const pin = fragment.querySelector(".mixer-row__pin");
+
+    root.dataset.key = key;
+    if (nested) root.classList.add("mixer-row--nested");
+
+    slider.addEventListener("pointerdown", () => activeDrags.add(key));
+    slider.addEventListener("pointerup", () => activeDrags.delete(key));
+    slider.addEventListener("pointercancel", () => activeDrags.delete(key));
     slider.addEventListener("input", () => {
       const v = Number(slider.value);
       value.textContent = `${v}%`;
       slider.style.setProperty("--fill", `${v}%`);
-      queueVolumeSend(name, v);
+      item.onVolume(v);
     });
 
-    mute.addEventListener("click", () => {
-      sendMessage({ type: "toggle_mute", name });
-    });
+    // El ícono/favicon hace doble función de botón de mute (ver el
+    // porqué en el template): un solo control en vez de dos apretujados.
+    badge.addEventListener("click", () => item.onMute());
+    focus.addEventListener("click", () => item.onFocus());
+    pin.addEventListener("click", () => item.onTogglePin());
 
-    container.appendChild(fragment);
-    const entry = { root, slider, value, mute };
-    cards.set(name, entry);
+    parent.appendChild(root);
+    return { root, badgeEl: badge, labelEl: nameEl, slider, value, focus, pin };
+  }
+
+  // Card de nivel superior: representa una app (agrupada por proceso, como
+  // siempre) o, si la extensión reportó pestañas sin poder calzarlas con
+  // ninguna app conocida, una pestaña "huérfana" mostrada suelta para no
+  // perder el control. Vive dentro de un `.mixer-group` que también aloja
+  // el contenedor de sus pestañas anidadas (vacío si no tiene ninguna).
+  function createCard(key, item) {
+    const group = document.createElement("div");
+    group.className = "mixer-group";
+    group.dataset.key = key;
+    container.appendChild(group);
+
+    const row = buildRow(key, item, group);
+
+    const nestedContainer = document.createElement("div");
+    nestedContainer.className = "mixer-group__nested";
+    group.appendChild(nestedContainer);
+
+    const entry = { ...row, groupEl: group, nestedContainer };
+    cards.set(key, entry);
     return entry;
   }
 
-  function updateCard(entry, app) {
-    const isDragging = activeDrags.has(app.name);
-    entry.root.classList.toggle("muted", app.muted);
-    entry.mute.classList.toggle("active", app.muted);
+  function createTabRow(key, item, parentContainer) {
+    const row = buildRow(key, item, parentContainer, { nested: true });
+    tabRows.set(key, row);
+    return row;
+  }
+
+  // Reemplaza la sigla de 2 letras por el ícono real (favicon de la
+  // pestaña, o el .ico extraído del .exe) cuando hay uno disponible. Si la
+  // imagen falla (404, sitio sin favicon, etc.) cae de vuelta al texto, y
+  // no reintenta la misma URL rota en cada render — solo si `iconUrl`
+  // cambia (ej. la pestaña navegó a otro sitio) vuelve a intentarlo.
+  function setBadgeContent(badgeEl, item) {
+    const iconUrl = item.iconUrl;
+    if (!iconUrl) {
+      badgeEl.textContent = item.badge;
+      badgeEl.classList.remove("has-image");
+      delete badgeEl.dataset.iconUrl;
+      return;
+    }
+    if (badgeEl.dataset.iconUrl === iconUrl) return;
+    badgeEl.dataset.iconUrl = iconUrl;
+
+    const img = document.createElement("img");
+    img.alt = "";
+    img.onerror = () => {
+      badgeEl.textContent = item.badge;
+      badgeEl.classList.remove("has-image");
+    };
+    img.src = iconUrl;
+    badgeEl.replaceChildren(img);
+    badgeEl.classList.add("has-image");
+  }
+
+  // `item.label`/`item.badge` se reescriben en cada render (no solo al
+  // crear la card): el título de una pestaña de YouTube cambia de video en
+  // video sin que la pestaña se cierre, y sin esto el fader se quedaba
+  // pegado al título del primer video que la hizo aparecer en el mixer.
+  function updateCard(entry, key, item) {
+    entry.labelEl.textContent = item.label;
+    if (entry.badgeEl) setBadgeContent(entry.badgeEl, item);
+
+    const isAvailable = item.available !== false;
+    const isDragging = activeDrags.has(key);
+
+    entry.root.classList.toggle("muted", item.muted);
+    entry.badgeEl.setAttribute("aria-label", item.muted ? "Activar sonido" : "Silenciar");
+    entry.pin.classList.toggle("active", Boolean(item.pinned));
+    entry.pin.setAttribute("aria-pressed", String(Boolean(item.pinned)));
+
+    // "Sonando" (glow) solo tiene sentido si de verdad hay señal de audio
+    // ahora mismo: una card pineada en silencio, o muteada, no debería
+    // brillar como si estuviera sonando.
+    entry.root.classList.toggle("sounding", isAvailable && Boolean(item.active) && !item.muted);
+    entry.root.classList.toggle("unavailable", !isAvailable);
+    entry.slider.disabled = !isAvailable;
+    entry.badgeEl.disabled = !isAvailable;
+    entry.focus.disabled = !isAvailable;
 
     if (!isDragging) {
-      entry.slider.value = String(app.volume);
-      entry.value.textContent = `${app.volume}%`;
-      entry.slider.style.setProperty("--fill", `${app.volume}%`);
+      const displayVolume = isAvailable ? item.volume : 0;
+      entry.slider.value = String(displayVolume);
+      entry.value.textContent = isAvailable ? `${item.volume}%` : "—";
+      entry.slider.style.setProperty("--fill", `${displayVolume}%`);
     }
   }
 
-  function renderState(apps) {
-    emptyState.style.display = apps.length === 0 ? "block" : "none";
+  // Cuelga cada pestaña de `tabItems` dentro del contenedor anidado de su
+  // card de app, creando/reubicando la fila si hace falta (ej. la pestaña
+  // cambió de navegador entre un render y otro, caso raro pero posible).
+  function renderNestedTabs(nestedContainer, tabItems, seenTabRows) {
+    for (const item of tabItems) {
+      seenTabRows.add(item.key);
+      let row = tabRows.get(item.key);
+      if (!row) {
+        row = createTabRow(item.key, item, nestedContainer);
+      } else if (row.root.parentElement !== nestedContainer) {
+        nestedContainer.appendChild(row.root);
+      }
+      updateCard(row, item.key, item);
+    }
+  }
 
-    const seen = new Set();
-    for (const app of apps) {
-      seen.add(app.name);
-      const entry = cards.get(app.name) || createCard(app.name);
-      updateCard(entry, app);
+  function renderState(apps, tabs) {
+    const appItems = apps.map((app) => ({
+      key: `app:${app.name}`,
+      matchName: app.name.replace(/\.exe$/i, "").toLowerCase(),
+      badge: app.name.replace(/\.exe$/i, "").slice(0, 2).toUpperCase(),
+      label: app.name.replace(/\.exe$/i, ""),
+      // Sin ícono mientras está "phantom" (pineada pero sin proceso real
+      // corriendo): no hay nada que extraer, y así reintenta apenas vuelva.
+      iconUrl: app.available === false ? null : `/api/app-icon/${encodeURIComponent(app.name)}`,
+      volume: app.volume,
+      muted: app.muted,
+      active: app.active,
+      pinned: app.pinned,
+      available: app.available,
+      tabs: [],
+      onVolume: (v) => queueAppVolume(app.name, v),
+      onMute: () => sendMessage({ type: "toggle_mute", name: app.name }),
+      onTogglePin: () => sendMessage({ type: "toggle_pin_app", name: app.name }),
+      onFocus: () => {
+        fetch(`/api/focus-app/${encodeURIComponent(app.name)}`, { method: "POST" }).catch(() => {
+          // Sin conexión momentánea, o la app no tiene ventana visible — no
+          // hay mucho más para hacer que dejar el botón como si nada.
+        });
+      },
+    }));
+
+    // Cada pestaña se anida bajo la app cuyo nombre de proceso coincide
+    // (ej. "brave" ← navigator.brave detectado por la extensión). Si
+    // ninguna calza —la sesión de audio del navegador todavía no aparece,
+    // o la extensión no pudo identificar el navegador—, se muestra suelta
+    // en vez de perderla en silencio.
+    const orphanTabs = [];
+    for (const tab of tabs) {
+      const tabItem = {
+        key: `tab:${tab.id}`,
+        label: tab.title || "Pestaña",
+        iconUrl: tab.favIconUrl || null,
+        volume: tab.volume,
+        muted: tab.muted,
+        active: tab.audible,
+        pinned: tab.pinned,
+        available: true,
+        onVolume: (v) => queueTabVolume(tab.id, v),
+        onMute: () => sendMessage({ type: "toggle_tab_mute", tabId: tab.id }),
+        onTogglePin: () => sendMessage({ type: "toggle_pin_tab", tabId: tab.id }),
+        onFocus: () => sendMessage({ type: "focus_tab", tabId: tab.id }),
+      };
+      const parent = appItems.find((a) => a.matchName === (tab.browser || "").toLowerCase());
+      if (parent) {
+        parent.tabs.push(tabItem);
+      } else {
+        orphanTabs.push({
+          ...tabItem,
+          badge: "TB",
+          label: `${tab.browser ? tab.browser + ": " : ""}${tabItem.label}`,
+        });
+      }
     }
 
-    // Elimina las tarjetas de apps que ya no tienen audio activo.
-    for (const [name, entry] of cards) {
-      if (!seen.has(name)) {
-        entry.root.remove();
-        cards.delete(name);
-        activeDrags.delete(name);
+    const topLevelItems = [...appItems, ...orphanTabs];
+    emptyState.style.display = topLevelItems.length === 0 ? "block" : "none";
+
+    const seenCards = new Set();
+    const seenTabRows = new Set();
+
+    for (const item of topLevelItems) {
+      seenCards.add(item.key);
+      const entry = cards.get(item.key) || createCard(item.key, item);
+      updateCard(entry, item.key, item);
+      if (item.tabs) renderNestedTabs(entry.nestedContainer, item.tabs, seenTabRows);
+    }
+
+    // Elimina las tarjetas de apps/pestañas que ya no tienen audio activo.
+    for (const [key, entry] of cards) {
+      if (!seenCards.has(key)) {
+        entry.groupEl.remove();
+        cards.delete(key);
+        activeDrags.delete(key);
+      }
+    }
+
+    for (const [key, row] of tabRows) {
+      if (!seenTabRows.has(key)) {
+        row.root.remove();
+        tabRows.delete(key);
+        activeDrags.delete(key);
       }
     }
   }

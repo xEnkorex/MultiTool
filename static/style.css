@@ -190,7 +190,7 @@ body {
 .panel {
   display: flex;
   flex-direction: column;
-  gap: 0.9rem;
+  gap: 0.4rem;
   padding: 1.1rem;
   max-width: 640px;
   margin: 0 auto;
@@ -204,131 +204,273 @@ body {
   line-height: 1.6;
 }
 
-.app-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 1rem 1.1rem 1.2rem;
+/* ---------------------------------------------------------------------
+   Fila de mixer — una sola línea por control, apps y pestañas anidadas
+   comparten exactamente el mismo componente (`.mixer-row`, ver plantilla
+   `#mixer-row-template`). El <input type=range> ocupa toda la fila como
+   fondo: su propio degradé de "fill" ES la barra de volumen, así que no
+   hace falta una barra aparte ni una card alta — cabe todo en ~40px.
+   --------------------------------------------------------------------- */
+
+.mixer-group {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  transition: opacity 0.15s ease, transform 0.15s ease, border-color 0.2s;
+  gap: 0.3rem;
 }
 
-.app-card.muted {
-  opacity: 0.55;
+.mixer-row {
+  position: relative;
+  height: 42px;
+  border-radius: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  transition: opacity 0.15s ease, border-color 0.2s, box-shadow 0.2s;
+}
+
+.mixer-row.muted {
   border-color: var(--danger);
 }
 
-.app-card__header {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
+.mixer-row.muted .mixer-row__value,
+.mixer-row.muted .mixer-row__name {
+  opacity: 0.6;
 }
 
-.app-card__badge {
-  width: 34px;
-  height: 34px;
+/* Efecto "sonando": glow neon sutil mientras la app/pestaña está
+   produciendo audio de verdad ahora mismo (no solo "tiene volumen > 0"),
+   para distinguirla de un fader simplemente pineado en silencio. */
+.mixer-row.sounding {
+  border-color: var(--accent);
+  box-shadow: 0 0 14px rgba(0, 255, 242, 0.35), inset 0 0 16px rgba(0, 255, 242, 0.06);
+}
+
+/* Card/fila pineada pero sin sesión de audio real detrás (app cerrada, o
+   Windows todavía no le abrió sesión): se ve pero no se puede tocar. */
+.mixer-row.unavailable {
+  opacity: 0.45;
+}
+
+.mixer-row.unavailable .mixer-row__slider,
+.mixer-row.unavailable .mixer-row__badge,
+.mixer-row.unavailable .mixer-row__focus {
+  pointer-events: none;
+}
+
+.mixer-row__slider {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.mixer-row__slider::-webkit-slider-runnable-track {
+  height: 42px;
+  background: linear-gradient(90deg, rgba(0, 255, 242, 0.22) 0%, rgba(0, 255, 242, 0.22) var(--fill, 0%), transparent var(--fill, 0%));
+}
+
+.mixer-row__slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 3px;
+  height: 28px;
+  margin-top: 7px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(0, 255, 242, 0.7);
+}
+
+.mixer-row__slider::-moz-range-track {
+  height: 42px;
+  background: transparent;
+}
+
+.mixer-row__slider::-moz-range-progress {
+  height: 42px;
+  background: rgba(0, 255, 242, 0.22);
+}
+
+.mixer-row__slider::-moz-range-thumb {
+  width: 3px;
+  height: 28px;
+  border: none;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(0, 255, 242, 0.7);
+}
+
+/* Encima del slider, sin bloquearlo: solo los botones (mute/pin) vuelven
+   a aceptar clicks, así arrastrar en cualquier otra parte de la fila
+   mueve el volumen en vez de quedar atrapado en el texto. */
+.mixer-row__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.5rem;
+  pointer-events: none;
+}
+
+/* El propio ícono/favicon ES el botón de mute (ver el porqué en el
+   template) — reset de estilos de <button> para que se vea igual que
+   cuando era un <span>, más el cursor y pointer-events que le tocan por
+   ser un control de verdad dentro del overlay (que por defecto no
+   acepta clicks, para no robarle el arrastre al slider de abajo). */
+.mixer-row__badge {
+  pointer-events: auto;
   flex-shrink: 0;
-  border-radius: 9px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 6px;
   background: linear-gradient(135deg, var(--accent-dim), var(--accent));
   color: #05050a;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 800;
-  font-size: 0.95rem;
+  font-size: 0.62rem;
+  font-family: inherit;
+  overflow: hidden;
+  padding: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: opacity 0.15s ease, box-shadow 0.15s ease;
 }
 
-.app-card__name {
+/* Ícono real (favicon de la pestaña, o el .ico extraído del .exe) en vez
+   de la sigla de 2 letras: sin el degradé de fondo, para que se vea
+   "flotando" en vez de en una cajita de color (mismo criterio que los
+   íconos personalizados del Launcher). */
+.mixer-row__badge.has-image {
+  background: transparent;
+}
+
+.mixer-row.muted .mixer-row__badge {
+  opacity: 0.45;
+  box-shadow: 0 0 0 2px var(--danger);
+}
+
+.mixer-row__badge:active {
+  transform: scale(0.88);
+}
+
+.mixer-row__badge img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.mixer-row__name {
   flex: 1;
-  font-size: 0.95rem;
+  min-width: 0;
+  font-size: 0.85rem;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.app-card__value {
+.mixer-row__value {
+  flex-shrink: 0;
   font-variant-numeric: tabular-nums;
   color: var(--accent);
   font-weight: 700;
-  min-width: 3.2rem;
+  font-size: 0.78rem;
+  min-width: 2.6rem;
   text-align: right;
 }
 
-/* Slider grande y táctil: pensado para dedos y pantallas viejas de baja
-   resolución/precisión. Alto generoso en track y thumb. */
-.app-card__slider {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 14px;
-  border-radius: 999px;
-  background: #1d1d29;
-  outline: none;
-  touch-action: none;
-}
-
-.app-card__slider::-webkit-slider-runnable-track {
-  height: 14px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent) 0%, var(--accent) var(--fill, 0%), #1d1d29 var(--fill, 0%));
-}
-
-.app-card__slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 32px;
-  height: 32px;
-  margin-top: -9px;
-  border-radius: 50%;
-  background: var(--text);
-  border: 3px solid var(--accent);
-  box-shadow: 0 0 10px rgba(0, 255, 242, 0.5);
-}
-
-.app-card__slider::-moz-range-track {
-  height: 14px;
-  border-radius: 999px;
-  background: #1d1d29;
-}
-
-.app-card__slider::-moz-range-progress {
-  height: 14px;
-  border-radius: 999px;
-  background: var(--accent);
-}
-
-.app-card__slider::-moz-range-thumb {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--text);
-  border: 3px solid var(--accent);
-  box-shadow: 0 0 10px rgba(0, 255, 242, 0.5);
-}
-
-.app-card__mute {
-  align-self: flex-end;
+.mixer-row__focus,
+.mixer-row__pin {
+  pointer-events: auto;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
-  border: 1px solid var(--border);
+  border: none;
   color: var(--text-dim);
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
-  font-weight: 700;
-  padding: 0.4rem 0.9rem;
-  border-radius: 999px;
   cursor: pointer;
+  padding: 0;
+  touch-action: manipulation;
 }
 
-.app-card__mute.active {
-  color: var(--danger);
-  border-color: var(--danger);
-  background: rgba(255, 43, 109, 0.08);
+.mixer-row__focus svg,
+.mixer-row__pin svg {
+  width: 15px;
+  height: 15px;
 }
 
-.app-card__mute:active {
-  transform: scale(0.96);
+.mixer-row__pin.active {
+  color: var(--accent);
+}
+
+.mixer-row__focus:active,
+.mixer-row__pin:active {
+  transform: scale(0.88);
+}
+
+/* Pestañas anidadas dentro del grupo de su navegador (vía la extensión —
+   ver extension/): la fila de la app sigue siendo el volumen "general"
+   del proceso, y cada pestaña cuelga debajo, indentada, con su propio
+   control. Vacío cuando el navegador no tiene pestañas reportadas. */
+.mixer-group__nested {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding-left: 0.9rem;
+  border-left: 2px solid var(--border);
+  margin-left: 0.6rem;
+}
+
+.mixer-group__nested:empty {
+  display: none;
+}
+
+.mixer-row--nested {
+  height: 34px;
+}
+
+.mixer-row--nested .mixer-row__slider::-webkit-slider-runnable-track {
+  height: 34px;
+}
+
+.mixer-row--nested .mixer-row__slider::-moz-range-track {
+  height: 34px;
+}
+
+.mixer-row--nested .mixer-row__slider::-moz-range-progress {
+  height: 34px;
+}
+
+.mixer-row--nested .mixer-row__slider::-webkit-slider-thumb {
+  height: 22px;
+  margin-top: 6px;
+}
+
+.mixer-row--nested .mixer-row__slider::-moz-range-thumb {
+  height: 22px;
+}
+
+.mixer-row--nested .mixer-row__name {
+  font-size: 0.78rem;
+}
+
+.mixer-row--nested .mixer-row__badge {
+  width: 17px;
+  height: 17px;
+  font-size: 0.55rem;
 }
 
 /* ---------------------------------------------------------------------

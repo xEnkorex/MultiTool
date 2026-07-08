@@ -133,16 +133,35 @@
     </div>
   </div>
 
-  <template id="app-card-template">
-    <section class="app-card" data-name="">
-      <div class="app-card__header">
-        <span class="app-card__badge"></span>
-        <span class="app-card__name"></span>
-        <span class="app-card__value">0%</span>
+  <!-- Fila compacta de mixer, usada tanto para apps como para pestañas
+       anidadas (ver mixer-row--nested en style.css): el <input type=range>
+       ocupa toda la fila como fondo (su propio "fill" ES la barra de
+       volumen) y el resto de los controles flotan encima, para que una
+       sola línea alcance en vez de una card completa por control. -->
+  <template id="mixer-row-template">
+    <div class="mixer-row">
+      <input class="mixer-row__slider" type="range" min="0" max="100" step="1" value="0" />
+      <div class="mixer-row__overlay">
+        <!-- El ícono/favicon ES el botón de mute (clic para silenciar) —
+             antes había un botón de mute aparte pegado al lado, dos
+             íconos para una sola zona chica no hacía falta. -->
+        <button class="mixer-row__badge" type="button" aria-label="Silenciar"></button>
+        <span class="mixer-row__name"></span>
+        <span class="mixer-row__value">0%</span>
+        <button class="mixer-row__focus" type="button" aria-label="Traer al frente">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="4" y="4" width="12" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="2" />
+            <path d="M14 4h6v6M20 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <button class="mixer-row__pin" type="button" aria-label="Anclar" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 3h8l-1 6 3 3v2H6v-2l3-3-1-6Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+            <path d="M12 17v5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+        </button>
       </div>
-      <input class="app-card__slider" type="range" min="0" max="100" step="1" value="0" />
-      <button class="app-card__mute" type="button" aria-label="Silenciar">MUTE</button>
-    </section>
+    </div>
   </template>
 
   <template id="add-tile-template">

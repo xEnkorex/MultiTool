@@ -20,8 +20,9 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 
+import psutil
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -37,6 +38,9 @@ import background_apps
 import logitech_battery
 import bt_battery
 import paths
+import pinned_store
+import app_icons
+import window_focus
 
 ALLOWED_ICON_EXTENSIONS = {".ico", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg"}
 
@@ -88,9 +92,110 @@ class ConnectionManager:
 connections = ConnectionManager()
 audio_manager: AudioSessionManager | None = None
 
+# Puede haber más de un navegador con la extensión instalada a la vez (ej.
+# Chrome y Brave abiertos juntos) — cada uno abre su propia conexión acá,
+# identificada por el nombre de proceso que le detectamos (o una key
+# sintética si no se pudo detectar). Antes esto era un solo par de
+# variables globales, así que el segundo navegador en conectar pisaba por
+# completo las pestañas del primero en vez de sumarse.
+extension_sessions: dict[str, dict] = {}
 
-def _state_to_payload(state: list[AppVolumeState]) -> dict:
-    return {"type": "state", "apps": [asdict(a) for a in state]}
+# El service worker de la extensión (Manifest V3) se apaga solo por
+# inactividad y se reconecta cuando puede — normalmente enseguida, pero en
+# el peor caso (nada despierta al service worker antes) depende de una
+# alarma que la extensión reprograma cada 1 minuto (ver background.js).
+# Un margen más corto que eso dejaría el mixer sin esas pestañas por un
+# rato cada vez que le toque ese peor caso.
+EXTENSION_RECONNECT_GRACE_SECONDS = 75
+
+
+def _all_extension_tabs() -> list[dict]:
+    # El tabId de Chrome son solo únicos DENTRO de ese navegador — con dos
+    # sesiones conectadas (Chrome y Brave a la vez) es perfectamente
+    # posible que ambos tengan, por ejemplo, una pestaña con id=5. Por eso
+    # acá se le antepone la sesión al id antes de mandarlo al frontend: es
+    # un identificador opaco para el cliente, pero le alcanza a
+    # `_resolve_tab_target` para saber a qué navegador reenviar un comando
+    # sin ambigüedad.
+    tabs: list[dict] = []
+    for session_key, session in extension_sessions.items():
+        for tab in session["tabs"]:
+            tabs.append({**tab, "id": f"{session_key}:{tab['id']}"})
+    return tabs
+
+
+async def _clear_session_tabs_after_grace(session_key: str) -> None:
+    await asyncio.sleep(EXTENSION_RECONNECT_GRACE_SECONDS)
+    session = extension_sessions.get(session_key)
+    if session is None or session["ws"] is not None:
+        return  # se reconectó (o ya se limpió) antes de que se cumpliera el margen
+    del extension_sessions[session_key]
+    assert audio_manager is not None
+    await connections.broadcast(_state_to_payload(audio_manager.get_state_snapshot(), _all_extension_tabs()))
+
+
+def _resolve_tab_target(composite_tab_id: str) -> tuple[WebSocket, int] | None:
+    """Deshace el `id` compuesto que arma `_all_extension_tabs` para saber
+    a qué conexión de extensión (y con qué tabId real) reenviar un comando."""
+    session_key, sep, raw_id = composite_tab_id.rpartition(":")
+    if not sep or not raw_id.lstrip("-").isdigit():
+        return None
+    session = extension_sessions.get(session_key)
+    if session is None or session["ws"] is None:
+        return None
+    return session["ws"], int(raw_id)
+
+
+def _strip_exe(name: str) -> str:
+    return name[:-4] if name.lower().endswith(".exe") else name
+
+
+def _detect_browser_process_name(client_port: int) -> str | None:
+    """Identifica qué .exe abrió la conexión WebSocket de la extensión,
+    mirando la tabla de sockets TCP del sistema en vez de confiar en que el
+    navegador se autoidentifique desde JavaScript.
+
+    Se probó primero pedirle al propio navegador que se identifique (vía
+    `navigator.brave.isBrave()` desde la extensión) pero esa API no está
+    disponible en todas las instalaciones de Brave — quedaba siempre en el
+    fallback "Chrome" y las pestañas no anidaban. Esto es más confiable:
+    del lado del proceso que abrió la conexión hacia nuestro puerto, su
+    extremo local es exactamente `client_port` (el puerto efímero que
+    Starlette reporta como `websocket.client`), así que sea cual sea el
+    navegador (Brave, Chrome, Edge...) esto identifica el .exe real sin
+    adivinar nada.
+    """
+    try:
+        for conn in psutil.net_connections(kind="tcp"):
+            if conn.pid and conn.raddr and conn.laddr and conn.laddr.port == client_port and conn.raddr.port == 8000:
+                return psutil.Process(conn.pid).name()
+    except (psutil.Error, PermissionError, OSError):
+        pass
+    return None
+
+
+# Apps "pineadas": quedan visibles en el mixer aunque Windows no les tenga
+# una sesión de audio activa ahora mismo (ver pinned_store.py). Se cargan
+# una sola vez al arrancar; toggle_pin_app las actualiza en memoria y en disco.
+pinned_apps: set[str] = pinned_store.load_pinned()
+
+
+def _state_to_payload(state: list[AppVolumeState], tabs: list[dict]) -> dict:
+    apps_payload = []
+    seen_names = set()
+    for a in state:
+        seen_names.add(a.name)
+        apps_payload.append({**asdict(a), "pinned": a.name in pinned_apps, "available": True})
+
+    # Una app pineada que ya no tiene sesión de audio (cerrada, o Windows
+    # todavía no le abrió una) igual se manda, sin volumen real: el
+    # frontend la muestra atenuada y sin controles hasta que reaparezca.
+    for name in sorted(pinned_apps - seen_names):
+        apps_payload.append(
+            {"name": name, "volume": None, "muted": False, "active": False, "pinned": True, "available": False}
+        )
+
+    return {"type": "state", "apps": apps_payload, "tabs": tabs}
 
 
 @asynccontextmanager
@@ -102,7 +207,7 @@ async def lifespan(app: FastAPI):
         # Se ejecuta en el hilo de audio: saltamos de vuelta al event loop
         # de asyncio para poder hacer el broadcast (await) de forma segura.
         asyncio.run_coroutine_threadsafe(
-            connections.broadcast(_state_to_payload(state)), loop
+            connections.broadcast(_state_to_payload(state, _all_extension_tabs())), loop
         )
 
     audio_manager = AudioSessionManager(on_state_change=on_state_change)
@@ -305,6 +410,30 @@ async def close_background_app(pid: int) -> dict:
     return {"ok": True}
 
 
+@app.get("/api/app-icon/{process_name}")
+async def get_app_icon(process_name: str) -> Response:
+    # La extracción usa GDI (win32gui/win32ui), bloqueante — se corre en un
+    # hilo aparte para no trabar el event loop mientras el mixer sondea íconos.
+    icon_png = await asyncio.to_thread(app_icons.get_icon_png, process_name)
+    if icon_png is None:
+        raise HTTPException(404, "No se pudo extraer el ícono de esa app")
+    return Response(
+        content=icon_png,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@app.post("/api/focus-app/{process_name}")
+async def focus_app(process_name: str) -> dict:
+    # EnumWindows + AttachThreadInput son llamadas Win32 bloqueantes; se
+    # corren en un hilo aparte para no trabar el event loop.
+    found = await asyncio.to_thread(window_focus.focus_app, process_name)
+    if not found:
+        raise HTTPException(404, "No se encontró una ventana visible para esa app")
+    return {"ok": True}
+
+
 @app.get("/api/logitech/battery")
 async def get_logitech_battery() -> dict:
     # read_battery() hace I/O HID bloqueante (con timeouts de hasta ~150ms
@@ -327,13 +456,14 @@ async def get_headset_battery() -> dict:
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
+    global pinned_apps
     await connections.connect(websocket)
     logger.info("Cliente conectado: %s", websocket.client)
 
     assert audio_manager is not None
     # Estado inicial inmediato: no esperamos al próximo tick de polling.
     snapshot = audio_manager.get_state_snapshot()
-    await websocket.send_text(json.dumps(_state_to_payload(snapshot)))
+    await websocket.send_text(json.dumps(_state_to_payload(snapshot, _all_extension_tabs())))
 
     try:
         while True:
@@ -344,20 +474,125 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 continue
 
             action = data.get("type")
-            name = data.get("name")
-            if not name:
-                continue
 
             if action == "set_volume":
+                name = data.get("name")
                 volume = data.get("volume")
-                if isinstance(volume, (int, float)):
+                if name and isinstance(volume, (int, float)):
                     audio_manager.request_set_volume(name, int(volume))
             elif action == "toggle_mute":
-                audio_manager.request_toggle_mute(name)
+                name = data.get("name")
+                if name:
+                    audio_manager.request_toggle_mute(name)
+            elif action == "set_tab_volume":
+                tab_id = data.get("tabId")
+                volume = data.get("volume")
+                target = _resolve_tab_target(tab_id) if isinstance(tab_id, str) else None
+                if target is not None and isinstance(volume, (int, float)):
+                    target_ws, raw_tab_id = target
+                    await target_ws.send_text(
+                        json.dumps({"type": "set_tab_volume", "tabId": raw_tab_id, "volume": int(volume)})
+                    )
+            elif action == "toggle_tab_mute":
+                tab_id = data.get("tabId")
+                target = _resolve_tab_target(tab_id) if isinstance(tab_id, str) else None
+                if target is not None:
+                    target_ws, raw_tab_id = target
+                    await target_ws.send_text(json.dumps({"type": "toggle_tab_mute", "tabId": raw_tab_id}))
+            elif action == "toggle_pin_app":
+                name = data.get("name")
+                if name:
+                    pinned_apps = pinned_store.toggle_pinned(name)
+                    await connections.broadcast(
+                        _state_to_payload(audio_manager.get_state_snapshot(), _all_extension_tabs())
+                    )
+            elif action == "toggle_pin_tab":
+                tab_id = data.get("tabId")
+                target = _resolve_tab_target(tab_id) if isinstance(tab_id, str) else None
+                if target is not None:
+                    target_ws, raw_tab_id = target
+                    await target_ws.send_text(json.dumps({"type": "toggle_pin_tab", "tabId": raw_tab_id}))
+            elif action == "focus_tab":
+                tab_id = data.get("tabId")
+                target = _resolve_tab_target(tab_id) if isinstance(tab_id, str) else None
+                if target is not None:
+                    target_ws, raw_tab_id = target
+                    await target_ws.send_text(json.dumps({"type": "focus_tab", "tabId": raw_tab_id}))
     except WebSocketDisconnect:
         logger.info("Cliente desconectado: %s", websocket.client)
     finally:
         connections.disconnect(websocket)
+
+
+@app.websocket("/ws/extension")
+async def extension_websocket(websocket: WebSocket) -> None:
+    """Canal separado para la extensión de navegador (puede haber varias
+    conexiones activas a la vez, una por cada navegador con la extensión
+    instalada): le reporta a AudioMixer qué pestañas suenan ahora mismo,
+    y recibe de vuelta comandos de volumen/mute para reenviarle al navegador."""
+    await websocket.accept()
+
+    browser_process_name = None
+    if websocket.client is not None:
+        browser_process_name = _detect_browser_process_name(websocket.client.port)
+        if browser_process_name:
+            logger.info("Navegador detectado para esta extensión: %s", browser_process_name)
+
+    # Sin detección (rarísimo: fallaría solo si psutil no puede leer la
+    # tabla TCP) cada conexión es su propia sesión efímera en vez de
+    # compartir identidad con otras — sigue funcionando, solo pierde la
+    # gracia de reconexión si el service worker se reinicia.
+    session_key = browser_process_name or f"conn:{id(websocket)}"
+
+    session = extension_sessions.get(session_key)
+    if session is not None:
+        # Reconexión de un navegador ya conocido (típicamente el service
+        # worker reiniciándose): se reusa la sesión y sus últimas pestañas
+        # conocidas en vez de resetear a [] — si no, cualquier broadcast
+        # que cayera justo en el huequito entre "conectó" y "mandó su
+        # primer tabs_state" mostraría esas pestañas vacías por un instante.
+        if session.get("clear_task") is not None:
+            session["clear_task"].cancel()
+        session["ws"] = websocket
+        session["clear_task"] = None
+    else:
+        session = {"ws": websocket, "tabs": [], "clear_task": None}
+        extension_sessions[session_key] = session
+    logger.info("Extensión de navegador conectada (%s): %s", session_key, websocket.client)
+
+    assert audio_manager is not None
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            if data.get("type") == "tabs_state":
+                tabs = data.get("tabs", [])
+                if browser_process_name:
+                    # El proceso real (detectado por socket) le gana a lo
+                    # que la extensión haya adivinado desde JavaScript.
+                    label = _strip_exe(browser_process_name)
+                    for tab in tabs:
+                        tab["browser"] = label
+                session["tabs"] = tabs
+                await connections.broadcast(
+                    _state_to_payload(audio_manager.get_state_snapshot(), _all_extension_tabs())
+                )
+    except WebSocketDisconnect:
+        logger.info("Extensión de navegador desconectada (%s): %s", session_key, websocket.client)
+    finally:
+        if extension_sessions.get(session_key) is session:
+            session["ws"] = None
+            # El service worker de la extensión (Manifest V3) se apaga solo
+            # por inactividad cada 10-30s y se reconecta enseguida — sin
+            # este margen, cada uno de esos cortes vaciaba de golpe las
+            # pestañas de ESTE navegador para volver a llenarse un instante
+            # después. Se espera un rato antes de asumir que cerró de verdad.
+            session["clear_task"] = asyncio.create_task(_clear_session_tabs_after_grace(session_key))
 
 
 if __name__ == "__main__":
